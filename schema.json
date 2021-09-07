@@ -1,0 +1,81 @@
+
+{
+    "type" : "struct",
+    "fields" : [ {
+      "name" : "Region",
+      "type" : "string",
+      "nullable" : true,
+      "metadata" : { }
+    }, {
+      "name" : "Country",
+      "type" : "string",
+      "nullable" : true,
+      "metadata" : { }
+    }, {
+      "name" : "Item_Type",
+      "type" : "string",
+      "nullable" : true,
+      "metadata" : { }
+    }, {
+      "name" : "Sales_Channel",
+      "type" : "string",
+      "nullable" : true,
+      "metadata" : { }
+    }, {
+      "name" : "Order_Priority",
+      "type" : "string",
+      "nullable" : true,
+      "metadata" : { }
+    }, {
+        "name" : "Order_Date",
+        "type" : "string",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Order_ID",
+        "type" : "long",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Ship_Date",
+        "type" : "string",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Units_Sold",
+        "type" : "long",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Unit_Price",
+        "type" : "double",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Unit_Cost",
+        "type" : "double",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Total_Revenue",
+        "type" : "double",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Total_Cost",
+        "type" : "double",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "Total_Profit",
+        "type" : "double",
+        "nullable" : true,
+        "metadata" : { }
+    }, {
+        "name" : "message_digest",
+        "type" : "string",
+        "nullable" : true,
+        "metadata" : { }
+    }]
+  }
+  
