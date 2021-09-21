@@ -1,7 +1,20 @@
+# TEST = {
+# 	"Name":"TEST_2",
+# 	"Rows":"5",
+# 	"Source":"s3",
+# 	"Target":"snowflake",
+# 	"maxstrlen" : "64",
+# 	"PK":"1",
+# 	"Schema":"l1s2d2"
+# }
+
+
 import sys
 import re
 import boto3
 import json
+import copy
+import datetime
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
@@ -11,18 +24,26 @@ from awsglue.dynamicframe import DynamicFrame
 from botocore.exceptions import ClientError
 from pyspark.sql.types import StructType
 
-sqlDataTypeMappings ={
+starting_time =  datetime.datetime.now()
+dataTypeMappings ={
     "string":"VARCHAR",
-    "integer":"NUMBER(38,0)",
     "double" :"NUMBER(30,4)",
     "long":"NUMBER(38,0)"
 }
-def pkeyHandler(T1,T2,pkeys):   
-    res=[]
-    for i in pkeys:
-        res.append(str(T1) + '.' + str(i) + ' = ' + str(T2) + '.' +str(i))   
-    s2 = str(' and '.join(res))   
-    return s2
+
+character_mappings={
+    "s":"string",
+    "l":"long",
+    "d":"double"
+}
+def primary_key_constraints(Table1,Table2,primaryKeys):   
+    if len(primaryKeys) == 0:
+        return "No Primary Keys"
+    total_constraints=[]
+    for columns in primaryKeys:
+        total_constraints.append(str(Table1) + '.' + str(columns) + ' = ' + str(Table2) + '.' +str(columns))   
+    return str(' and '.join(total_constraints))   
+    
 print ("args taken")
 args = getResolvedOptions(sys.argv, ['JOB_NAME', 'key_arn','format','Multiline','WORKFLOW_NAME','WORKFLOW_RUN_ID'])
 sc = SparkContext()
@@ -39,59 +60,6 @@ workflowProperties = glueClient.get_workflow_run_properties(
     Name = args['WORKFLOW_NAME'],
     RunId = args['WORKFLOW_RUN_ID']
 )['RunProperties']
-# Reading from json schema 
-# schemaProperty =  fileFormat+'SchemaPath'
-dataPath = fileFormat+'TestData'
-# schemaPath =  workflowProperties['RunProperties'][schemaProperty]
-# rdd = spark.sparkContext.wholeTextFiles(schemaPath)
-# text = rdd.collect()[0][1]
-# dict = json.loads(str(text))
-# custom_schema =  StructType.fromJson(dict)
-
-testDataPath =  workflowProperties[dataPath]
-
-sch = workflowProperties["TestSchema"]
-cnt_pk = int(workflowProperties['TestPrimaryKeys'])
-rows = int(workflowProperties['TestRows'])
-cols = int(workflowProperties['TestColumns'])
-stlen = int(workflowProperties['TestMaxStrLen'])
-tableName = str(workflowProperties['TestName'])+'_' + fileFormat.upper() + '_PYTHON'
-cols_added=0
-
-print (cnt_pk)
-Fields=[]
-pkeys = []
-for j in range(1,len(sch),2):
-	quantity = int(sch[j])
-	character = sch[j-1]
-	while quantity:
-		quantity-=1
-		temp = {'name':'','type':'','nullable':True,'metadata':{}}
-		#print (temp)
-		cols_added+=1
-		temp['name'] = 'Column_'+str(cols_added)
-		if character == 's':
-			temp['type'] = 'string'
-		elif character=='l':
-			temp['type'] = 'long'
-		elif character == 'd':
-			temp['type'] = 'double'
-		else:
-			pass
-		if cnt_pk>0:
-			cnt_pk-=1
-			pkeys.append(temp['name'])
-			temp['nullable'] = False
-		Fields.append(temp)
-
-print ("pkeys",pkeys)				
-
-
-finalDic = {
-    'type':'struct',
-    'fields':Fields
-}
-
 
 secret_client = boto3.client("secretsmanager", region_name="us-east-1", endpoint_url="https://secretsmanager.us-east-1.amazonaws.com")
 response = secret_client.get_secret_value(SecretId=args['key_arn'])
@@ -101,22 +69,70 @@ new_test = re.sub("-*(BEGIN|END) RSA PRIVATE KEY-*\r\n","", response["SecretStri
 
 
 SNOWFLAKE_SOURCE_NAME = "net.snowflake.spark.snowflake"
+# Reading from json schema 
+# schemaProperty =  fileFormat+'SchemaPath'
+
+# schemaPath =  workflowProperties['RunProperties'][schemaProperty]
+# rdd = spark.sparkContext.wholeTextFiles(schemaPath)
+# text = rdd.collect()[0][1]
+# dict = json.loads(str(text))
+# custom_schema =  StructType.fromJson(dict)
+
+dataPath = fileFormat+'TestData'
+testDataPath =  workflowProperties[dataPath]
+abbreviated_test_schema = workflowProperties["TestSchema"]
+primary_key_count = int(workflowProperties['TestPrimaryKeys'])
+maximum_string_length = int(workflowProperties['TestMaxStrLen'])
+read_source =  workflowProperties['TestSource']
+write_target = workflowProperties['TestTarget']
+test_name = workflowProperties['TestName']
+tableName = str(workflowProperties['TestName'])+'_' + fileFormat.upper() + '_PYTHON'
+
+current_column_number=0
 
 
+Fields=[]
+primaryKeys = []
 
-snowflake_properties = {
-    "sfUrl": "sfceawseast1d01.us-east-1.privatelink.snowflakecomputing.com",
-    "sfDatabase": "CNAS_DEV",
-    "sfWarehouse": "CNAS_DEV_WAREHOUSE",
-    "pem_private_key": new_test,
-    "sfUser": "CNAS_DEV_SNOWFLAKE_GLUE_USER",
-    "sfRole": "CNAS_DEV_ROLE",
-    "sfSchema": "PUBLIC",
-    "connectionName": "snowflakeConnection",
+
+end_index = len(abbreviated_test_schema)-1
+start_index =  0
+
+while start_index< end_index:
+    current_index = start_index
+    current_character = abbreviated_test_schema[start_index]
+    current_column_count = 0
+    current_index+=1
+    while abbreviated_test_schema[current_index] >='0' and abbreviated_test_schema[current_index]<='9':
+        print (current_index)
+        current_column_count = current_column_count*10 + int(abbreviated_test_schema[current_index])
+        current_index+=1
+        if current_index>end_index:
+            break
+    while current_column_count:
+        current_column_count-=1
+        current_field = {'name':'','type':'','nullable':True,'metadata':{}}
+        current_column_number+=1
+        current_field['name'] = 'Column_' + str(current_column_number)
+        current_field['type'] = character_mappings[current_character]
+        if primary_key_count>0:
+            primary_key_count-=1
+            primaryKeys.append(current_field['name'])
+            current_field['nullable']= False    
+        Fields.append(current_field)
+
+    start_index = current_index
+
+print ("primaryKeys",primaryKeys)				
+
+
+struct_type_generated_schema = {
+    'type':'struct',
+    'fields':Fields
 }
+custom_schema = StructType.fromJson(struct_type_generated_schema)
+print (struct_type_generated_schema)
 print ("src starts")
-custom_schema = StructType.fromJson(finalDic)
-print (finalDic)
 srcDataFrame =  spark.read.schema(custom_schema).option("multiline",args['Multiline']).load(testDataPath,format = fileFormat )
 print (srcDataFrame.show())
 DataSource0 = DynamicFrame.fromDF(srcDataFrame,glueContext,"DataSource0")
@@ -125,115 +141,157 @@ DataSource0 = DynamicFrame.fromDF(srcDataFrame,glueContext,"DataSource0")
 print ("src read done")
 
 print ("transform starts")
-columns = []
-tableColumns=[["BATCHID_IN","VARCHAR(64)"],["BATCHID_OUT","VARCHAR(64)"]]
+applyMappingColumns = []
+source_columns_for_transformations = []
+main_table_columns_list_of_list=[["BATCHID_IN","VARCHAR(64)"],["BATCHID_OUT","VARCHAR(64)"]]
+for field in Fields:
+    field_name =  field['name']
+    data_type =  dataTypeMappings[field['type']]
+    string_max_length = ""
+    is_null = ""
+    if field['type'] == 'string':
+        string_max_length += "("+str(maximum_string_length) + ")"
+    if field['nullable'] == False:
+        is_null+="NOT NULL"
+    source_columns_for_transformations.append((field['name'],field['type']))
+    main_table_columns_list_of_list.append([field_name,data_type,string_max_length,is_null])
 
-for i in range(len(finalDic['fields'])):
-    col = finalDic['fields'][i]
-    #print (col)
-    name = col['name']
-    dataType = sqlDataTypeMappings[col['type']]
+if read_source== 's3' and write_target == 'snowflake':
+    source_columns_for_transformations.append(("message_digest","string"))
+    main_table_columns_list_of_list.append(['message_digest','VARCHAR(64)'])
+    target_columns_for_transformations =  copy.deepcopy(source_columns_for_transformations)
+
+    for i in range(len(source_columns_for_transformations)):
+        mapping_tuple =  source_columns_for_transformations[i] +  target_columns_for_transformations[i]
+        applyMappingColumns.append(mapping_tuple)
+
+
+
+    main_table_column_list_of_strings = []
+    for columns in main_table_columns_list_of_list:
+        main_table_column_list_of_strings.append(' '.join(columns))
+    main_table_columns_final_string= ','.join(main_table_column_list_of_strings)
+
+    Transform0 = ApplyMapping.apply(frame = DataSource0, mappings = applyMappingColumns, transformation_ctx = "Transform0")
+
+    snowflake_properties = {
+        "sfUrl": "sfceawseast1d01.us-east-1.privatelink.snowflakecomputing.com",
+        "sfDatabase": "CNAS_DEV",
+        "sfWarehouse": "CNAS_DEV_WAREHOUSE",
+        "pem_private_key": new_test,
+        "sfUser": "CNAS_DEV_SNOWFLAKE_GLUE_USER",
+        "sfRole": "CNAS_DEV_ROLE",
+        "sfSchema": "PUBLIC",
+        "connectionName": "snowflakeConnection",
+    }
+    begin_txn = "BEGIN TRANSACTION;"
+    create_main_table_if_not_exist = """create table """ + tableName +"""  IF NOT EXISTS (""" + main_table_columns_final_string + """ ); """
+
+    create_metadata_table_if_not_exist = """CREATE TABLE BATCH_METADATA IF NOT EXISTS
+                                            (
+                                            TABLENAME  varchar(255) NOT NULL,
+                                            BATCH_ID   integer  NOT NULL,
+                                            BATCH_TS timestamp NOT null,
+                                            START_TS timestamp NOT null,
+                                            END_TS timestamp NULL,
+                                            BATCH_STATUS varchar(32) NOT Null,
+                                            Primary key ( TABLENAME,  BATCH_ID, BATCH_TS)
+                                            ); """
+    initialize_metadata = """Insert into BATCH_METADATA (TABLENAME,BATCH_ID,BATCH_TS,START_TS,BATCH_STATUS) select
+    '""" + tableName + """',
+    (SELECT COALESCE( MAX(BATCH_ID), 0) +1 FROM PUBLIC.BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""'),
+    current_timestamp,
+    current_timestamp,
+    'INITIALIZED';"""
+    update_hash = "Update " +tableName+"__STAGE set message_digest = HASH(*);"
+    update_batch_out = """Update """ + tableName + """ as T set Batchid_out = (SELECT MAX(BATCH_ID) -1 FROM PUBLIC.BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""')
+    Where Batchid_out = 999999999 And exists ( Select * from """+tableName+"""__STAGE S
+    where T.message_digest <> S.message_digest and """ + primary_key_constraints("T","S",primaryKeys) +"""  ); """
+    # where T.message_digest <> S.message_digest and T.id = S.id  );"""
+    insert_into_main_table = """Insert into """ + tableName +"""
+    Select (SELECT MAX(BATCH_ID) FROM BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""'), 999999999,*
+    From """+tableName+"""__STAGE st
+    Where not exists (
+    Select * from """+tableName+""" M
+    Where M.batchid_out = 999999999 and
+    M.message_digest = st.message_digest and """ + primary_key_constraints("m","st",primaryKeys) + """
+    );"""
+    Update_metadata = """Update BATCH_METADATA M
+    Set
+    M.End_ts = current_timestamp,
+    M.BATCH_STATUS = 'DONE'
+    where TABLENAME='"""+tableName+"""'
+    and Batch_id=(SELECT MAX(BATCH_ID) FROM BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""' and BATCH_STATUS = 'INITIALIZED');"""
+    truncate_stage = "TRUNCATE TABLE "+tableName+"__STAGE;"
+    commit_work = "Commit WORK;"
+
+    preactions = begin_txn+create_main_table_if_not_exist +create_metadata_table_if_not_exist
+    postactions = initialize_metadata+update_hash+update_batch_out+insert_into_main_table+Update_metadata+truncate_stage+commit_work
+
+    print (preactions)
+    print (postactions)
+    stageTable = tableName + "__STAGE"
+    snowflake_properties_dynamic = {
+        "sfUrl": "sfceawseast1d01.us-east-1.privatelink.snowflakecomputing.com",
+        "sfDatabase": "CNAS_DEV",
+        "sfWarehouse": "CNAS_DEV_WAREHOUSE",
+        "pem_private_key": new_test,
+        "sfUser": "CNAS_DEV_SNOWFLAKE_GLUE_USER",
+        "sfRole": "CNAS_DEV_ROLE",
+        "sfSchema": "PUBLIC",
+        "dbtable": stageTable,
+        "connectionName": "snowflakeConnection",
+        "preactions":preactions,
+        "postactions":postactions
+    }
+    # print ("Write from DF starts")
+    Sink0 = Transform0.toDF()
+    Sink0.show()
+    # Sink0.write.format(SNOWFLAKE_SOURCE_NAME).options(**snowflake_properties).option("dbtable", """"+tableName+"""__STAGE").option("preactions", preactions).option("postactions", postactions).mode("append").save()
+    #  DynamicFrame.fromDF(Sink0, glueContext, "test_frame_conversion")
+    # print ("Write form df end")
+    print ("Writing started")
+    glueContext.write_dynamic_frame.from_options(frame = Transform0, connection_type="custom.spark", connection_options=snowflake_properties_dynamic)
+    print ("write ended")
+elif read_source == 's3' and write_target=='s3':
     
-    stringSize = ""
-    isNull = ""
-    if col['type']=='string':
-        stringSize+="("+str(stlen) + ")"
-    if col['nullable'] == False:
-        isNull+="NOT NULL"
-    
-    columns.append((col['name'],col['type'],col['name'],col['type']))
-    tableColumns.append([name,dataType,stringSize,isNull])
-columns.append(("message_digest","string","message_digest","string"))
-tableColumns.append(['message_digest','VARCHAR(64)'])
-allset = []
-for i in tableColumns:
-    allset.append(' '.join(i))
-s1= ','.join(allset)
+    target_columns_for_transformations =  copy.deepcopy(source_columns_for_transformations)
 
-print (tableColumns)
-print (columns)
-Transform0 = ApplyMapping.apply(frame = DataSource0, mappings = columns, transformation_ctx = "Transform0")
+    for i in range(len(source_columns_for_transformations)):
+        mapping_tuple =  source_columns_for_transformations[i] +  target_columns_for_transformations[i]
+        applyMappingColumns.append(mapping_tuple)
 
-print ("transform ended")
+    main_table_column_list_of_strings = []
+    for columns in main_table_columns_list_of_list:
+        main_table_column_list_of_strings.append(' '.join(columns))
+    main_table_columns_final_string= ','.join(main_table_column_list_of_strings)
 
-begin_txn = "BEGIN TRANSACTION;"
-create_main_table_if_not_exist = """create table """ + tableName +"""  IF NOT EXISTS (""" + s1 + """ ); """
+    Transform0 = ApplyMapping.apply(frame = DataSource0, mappings = applyMappingColumns, transformation_ctx = "Transform0")
 
-create_metadata_table_if_not_exist = """CREATE TABLE BATCH_METADATA IF NOT EXISTS
-                                        (
-                                        TABLENAME  varchar(255) NOT NULL,
-                                        BATCH_ID   integer  NOT NULL,
-                                        BATCH_TS timestamp NOT null,
-                                        START_TS timestamp NOT null,
-                                        END_TS timestamp NULL,
-                                        BATCH_STATUS varchar(32) NOT Null,
-                                        Primary key ( TABLENAME,  BATCH_ID, BATCH_TS)
-                                          ); """
-initialize_metadata = """Insert into BATCH_METADATA (TABLENAME,BATCH_ID,BATCH_TS,START_TS,BATCH_STATUS) select
-'""" + tableName + """',
-(SELECT COALESCE( MAX(BATCH_ID), 0) +1 FROM PUBLIC.BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""'),
-current_timestamp,
-current_timestamp,
-'INITIALIZED';"""
-update_hash = "Update " +tableName+"__STAGE set message_digest = HASH(*);"
-update_batch_out = """Update """ + tableName + """ as T set Batchid_out = (SELECT MAX(BATCH_ID) -1 FROM PUBLIC.BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""')
-Where Batchid_out = 999999999 And exists ( Select * from """+tableName+"""__STAGE S
-where T.message_digest <> S.message_digest and """ + pkeyHandler("T","S",pkeys) +"""  ); """
-# where T.message_digest <> S.message_digest and T.id = S.id  );"""
-insert_into_main_table = """Insert into """ + tableName +"""
-Select (SELECT MAX(BATCH_ID) FROM BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""'), 999999999,*
-From """+tableName+"""__STAGE st
-Where not exists (
-Select * from """+tableName+""" M
-Where M.batchid_out = 999999999 and
-M.message_digest = st.message_digest and """ + pkeyHandler("m","st",pkeys) + """
- );"""
-Update_metadata = """Update BATCH_METADATA M
-Set
-M.End_ts = current_timestamp,
-M.BATCH_STATUS = 'DONE'
-where TABLENAME='"""+tableName+"""'
-and Batch_id=(SELECT MAX(BATCH_ID) FROM BATCH_METADATA  M where M.TABLENAME = '"""+tableName+"""' and BATCH_STATUS = 'INITIALIZED');"""
-truncate_stage = "TRUNCATE TABLE "+tableName+"__STAGE;"
-commit_work = "Commit WORK;"
-
-preactions = begin_txn+create_main_table_if_not_exist +create_metadata_table_if_not_exist
-postactions = initialize_metadata+update_hash+update_batch_out+insert_into_main_table+Update_metadata+truncate_stage+commit_work
-
-print (preactions)
-print (postactions)
-stageTable = tableName + "__STAGE"
-snowflake_properties_dynamic = {
-    "sfUrl": "sfceawseast1d01.us-east-1.privatelink.snowflakecomputing.com",
-    "sfDatabase": "CNAS_DEV",
-    "sfWarehouse": "CNAS_DEV_WAREHOUSE",
-    "pem_private_key": new_test,
-    "sfUser": "CNAS_DEV_SNOWFLAKE_GLUE_USER",
-    "sfRole": "CNAS_DEV_ROLE",
-    "sfSchema": "PUBLIC",
-    "dbtable": stageTable,
-    "connectionName": "snowflakeConnection",
-    "preactions":preactions,
-    "postactions":postactions
-}
-# print ("Write from DF starts")
-Sink0 = Transform0.toDF()
-Sink0.show()
-# Sink0.write.format(SNOWFLAKE_SOURCE_NAME).options(**snowflake_properties).option("dbtable", """"+tableName+"""__STAGE").option("preactions", preactions).option("postactions", postactions).mode("append").save()
-#  DynamicFrame.fromDF(Sink0, glueContext, "test_frame_conversion")
-# print ("Write form df end")
-print ("Writing started")
-glueContext.write_dynamic_frame.from_options(frame = Transform0, connection_type="custom.spark", connection_options=snowflake_properties_dynamic)
-print ("write ended")
+    glueContext.write_dynamic_frame.from_options(frame = Transform0,connection_type = "s3", format =  fileFormat,connection_options={
+        "path":"s3://terraform-20210726142826483100000007/performanceTestDataOutput/"+test_name+"_"+fileFormat+"_"+"Python/"
+    })
+else:
+    print("Source/Sink Not supported")
 
 
+
+finish_time =  datetime.datetime.now()
+
+time_taken_by_job =  str(finish_time-starting_time)
+job_time_key = str(args['JOB_NAME']) + "_time_taken"
+workflow_start_time = datetime.datetime.strptime(workflowProperties['workflowStartTime'],"%m/%d/%Y, %H:%M:%S")
+time_taken_by_all_jobs = str(finish_time - workflow_start_time)
 putProperties = glueClient.put_workflow_run_properties(
     Name = args['WORKFLOW_NAME'],
     RunId =  args['WORKFLOW_RUN_ID'],
     RunProperties={
-        args['JOB_NAME']:args['JOB_RUN_ID']
+        args['JOB_NAME']:args['JOB_RUN_ID'],
+        job_time_key:time_taken_by_job,
+        'time_taken_by_all_jobs':time_taken_by_all_jobs
     }
 )
+
 job.commit()
 
 
