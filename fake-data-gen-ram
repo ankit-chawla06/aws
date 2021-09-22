@@ -1,0 +1,75 @@
+import com.amazonaws.services.glue.{DynamicFrame, GlueContext}
+import com.amazonaws.services.glue.util.GlueArgParser
+import com.amazonaws.services.glue.util.Job
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.SparkSession
+import com.amazonaws.services.glue.util.JsonOptions
+
+import scala.collection.JavaConverters._
+import com.gs.cnas.glue.fakegen.{ColsAndPK, Config, Generate}
+import com.amazonaws.services.s3.{AmazonS3, AmazonS3ClientBuilder, AmazonS3URI}
+
+
+object FakedataGenerator {
+    def main(sysArgs: Array[String]) {
+
+        val spark: SparkContext = new SparkContext()
+        val glueContext: GlueContext = new GlueContext(spark)
+        val sparkSession: SparkSession = glueContext.getSparkSession
+        import sparkSession.implicits._
+
+        // Handle the optional arguments. Either we will have --cols and --numpk or we will
+        // have --schema If both supplied, schema overrules cols. If supplied, schema will be
+        // a StructType compatible JSON. Glue requires JSON arguments to be base64 encoded,
+        // so if a schema is supplied, it must be a base64-encoded string
+
+        val optionals = Seq("TestRows", "TestMaxStrLen", "TestOutdir", "TestSchema", "numpart", "cols", "numpk")
+        val lookFor = Seq("JOB_NAME") ++ optionals.filter(o => sysArgs.contains(s"--$o"))
+
+        val args : Map[String,String] = GlueArgParser.getResolvedOptions(sysArgs, lookFor.toArray)
+
+        val rows: Int = args("TestRows").toInt
+        val varchar: Int = args("TestMaxStrLen").toInt
+        val numpart: Int = args.getOrElse("numpart", "1").toInt
+
+
+        val schema: Either[String,ColsAndPK] = args.get("TestSchema") match {
+            case Some(s) => Left(s)
+            case None => Right(ColsAndPK(args("cols").toInt, args("numpk").toInt))
+        }
+
+        val config: Config = Config(rows, schema, varchar, numpart)
+        val outdir = args("TestOutdir")
+        val path = outdir + (if (outdir.last == '/') "" else "/")
+        val s3fakedata = path + config.BASE
+
+        val s3Uri = new AmazonS3URI(path)
+        val bucket = s3Uri.getBucket
+        val contentPrefix = s3Uri.getKey + config.BASE
+        val readme = s3Uri.getKey + config.README
+
+        System.out.println(s"Got config to be ${config}, will place generated data in ${outdir}")
+
+        val s3Client: AmazonS3 = AmazonS3ClientBuilder.defaultClient()
+
+        System.out.println(s"Checking for data in bucket $bucket with prefix $contentPrefix")
+        val notThere = s3Client.listObjects(bucket, contentPrefix).getObjectSummaries.isEmpty
+
+        if (notThere) {
+            System.out.println(s"No data found in bucket $bucket with prefix $contentPrefix. Generating")
+            Job.init(args("JOB_NAME"), glueContext, args.asJava)
+
+            val df = Generate.get(config, sparkSession).limit(config.rows).repartition(config.numpart)
+            val fakeData = DynamicFrame(df, glueContext)
+
+            glueContext.getSinkWithFormat(connectionType = "s3", options = JsonOptions(Map("path" -> s3fakedata)), format = "csv").writeDynamicFrame(fakeData)
+
+            s3Client.putObject(bucket, readme, config.asReadme)
+
+            Job.commit()
+        }
+        else {
+            System.out.println(s"Data is already there in bucket $bucket with prefix $contentPrefix. Exiting")
+        }
+    }
+}
