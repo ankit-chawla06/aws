@@ -1,12 +1,14 @@
-# TEST = {
-# 	"Name":"TEST_2",
-# 	"Rows":"5",
-# 	"Source":"s3",
-# 	"Target":"snowflake",
-# 	"maxstrlen" : "64",
-# 	"PK":"1",
-# 	"Schema":"l1s2d2"
-# }
+#Sample Test definition
+TEST = {
+	"Name":"Fifty_Thousand_Rows_Five_Columns",
+	"Rows":"50000",
+	"Source":"s3",
+	"Target":"s3",
+	"MaxStrLen" :"64",
+	"PrimaryKeys":"1",
+	"Schema":"l1s2d2",
+    "Format":"csv"
+}
 
 
 import sys
@@ -28,13 +30,20 @@ starting_time =  datetime.datetime.now()
 dataTypeMappings ={
     "string":"VARCHAR",
     "double" :"NUMBER(30,4)",
-    "long":"NUMBER(38,0)"
+    "long":"NUMBER(38,0)",
+    "boolean":"BOOLEAN"
 }
 
 character_mappings={
     "s":"string",
     "l":"long",
-    "d":"double"
+    "d":"double",
+    "b":"boolean"
+}
+multiline_mappings = {
+    "csv":"False",
+    "json":"False",
+    "parquet":"False"
 }
 def primary_key_constraints(Table1,Table2,primaryKeys):   
     if len(primaryKeys) == 0:
@@ -78,20 +87,33 @@ SNOWFLAKE_SOURCE_NAME = "net.snowflake.spark.snowflake"
 # dict = json.loads(str(text))
 # custom_schema =  StructType.fromJson(dict)
 
-dataPath = fileFormat+'TestData'
-testDataPath =  workflowProperties[dataPath]
+# dataPath = fileFormat+'TestData'
+#s3://terraform-20210726142826483100000007/fakedata/Five_Thousand_Rows_Five_Columns/csv/baseline/
+#s3://terraform-20210726142826483100000007/fakedata/Fifty_Thousand_Rows_Five_Columns/json/baseline/
+test_format = workflowProperties["TestFormat"]
+testDataPath =  workflowProperties["TestOutdir"]+test_format+"/baseline/"
 abbreviated_test_schema = workflowProperties["TestSchema"]
 primary_key_count = int(workflowProperties['TestPrimaryKeys'])
 maximum_string_length = int(workflowProperties['TestMaxStrLen'])
 read_source =  workflowProperties['TestSource']
 write_target = workflowProperties['TestTarget']
 test_name = workflowProperties['TestName']
-tableName = str(workflowProperties['TestName'])+'_' + fileFormat.upper() + '_PYTHON'
+
+# testDataPath =  "s3://terraform-20210726142826483100000007/fakedata/One_Million_row_Five_col/csv/baseline/"
+# abbreviated_test_schema = "l1s2d2"
+# primary_key_count = 1
+# maximum_string_length = 128
+# read_source =  "s3"
+# write_target = "snowflake"
+# test_name = "One_Million_row_Five_col"
+print (testDataPath)
+
+tableName = test_name+'_' + test_format.upper() + '_PYTHON'
 
 current_column_number=0
 
 
-Fields=[]
+Fields=[{'name':'id','type':'long','nullable':False,'metadata':{}}]
 primaryKeys = []
 
 
@@ -113,7 +135,7 @@ while start_index< end_index:
         current_column_count-=1
         current_field = {'name':'','type':'','nullable':True,'metadata':{}}
         current_column_number+=1
-        current_field['name'] = 'Column_' + str(current_column_number)
+        current_field['name'] = 'col' + str(current_column_number)
         current_field['type'] = character_mappings[current_character]
         if primary_key_count>0:
             primary_key_count-=1
@@ -133,7 +155,7 @@ struct_type_generated_schema = {
 custom_schema = StructType.fromJson(struct_type_generated_schema)
 print (struct_type_generated_schema)
 print ("src starts")
-srcDataFrame =  spark.read.schema(custom_schema).option("multiline",args['Multiline']).load(testDataPath,format = fileFormat )
+srcDataFrame =  spark.read.schema(custom_schema).option("multiline",multiline_mappings[test_format]).option("header","True").load(testDataPath,format = test_format )
 print (srcDataFrame.show())
 DataSource0 = DynamicFrame.fromDF(srcDataFrame,glueContext,"DataSource0")
 # DataSource0 = glueContext.create_dynamic_frame.from_options(format_options = formatOptions, connection_type = "s3", format = fileFormat, connection_options = {"paths": [testDataPath], "recurse":True}, transformation_ctx = "DataSource0")
@@ -268,8 +290,8 @@ elif read_source == 's3' and write_target=='s3':
 
     Transform0 = ApplyMapping.apply(frame = DataSource0, mappings = applyMappingColumns, transformation_ctx = "Transform0")
 
-    glueContext.write_dynamic_frame.from_options(frame = Transform0,connection_type = "s3", format =  fileFormat,connection_options={
-        "path":"s3://terraform-20210726142826483100000007/performanceTestDataOutput/"+test_name+"_"+fileFormat+"_"+"Python/"
+    glueContext.write_dynamic_frame.from_options(frame = Transform0,connection_type = "s3", format =  test_format,connection_options={
+        "path":"s3://terraform-20210726142826483100000007/performanceTestDataOutput/"+test_name+"_"+test_format+"_"+"Python/"
     })
 else:
     print("Source/Sink Not supported")
@@ -278,17 +300,13 @@ else:
 
 finish_time =  datetime.datetime.now()
 
-time_taken_by_job =  str(finish_time-starting_time)
-job_time_key = str(args['JOB_NAME']) + "_time_taken"
-workflow_start_time = datetime.datetime.strptime(workflowProperties['workflowStartTime'],"%m/%d/%Y, %H:%M:%S")
-time_taken_by_all_jobs = str(finish_time - workflow_start_time)
+
+
 putProperties = glueClient.put_workflow_run_properties(
     Name = args['WORKFLOW_NAME'],
     RunId =  args['WORKFLOW_RUN_ID'],
     RunProperties={
-        args['JOB_NAME']:args['JOB_RUN_ID'],
-        job_time_key:time_taken_by_job,
-        'time_taken_by_all_jobs':time_taken_by_all_jobs
+        args['JOB_NAME']:args['JOB_RUN_ID']
     }
 )
 
