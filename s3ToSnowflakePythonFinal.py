@@ -17,6 +17,7 @@ import boto3
 import json
 import copy
 import datetime
+import time
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
@@ -40,8 +41,8 @@ character_mappings={
     "d":"double",
     "b":"boolean"
 }
-multiline_mappings = {
-    "csv":"False",
+header_mappings = {
+    "csv":"True",
     "json":"False",
     "parquet":"False"
 }
@@ -54,14 +55,14 @@ def primary_key_constraints(Table1,Table2,primaryKeys):
     return str(' and '.join(total_constraints))   
     
 print ("args taken")
-args = getResolvedOptions(sys.argv, ['JOB_NAME', 'key_arn','format','Multiline','WORKFLOW_NAME','WORKFLOW_RUN_ID'])
+args = getResolvedOptions(sys.argv, ['JOB_NAME', 'key_arn','WORKFLOW_NAME','WORKFLOW_RUN_ID'])
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 formatOptions = {}
-fileFormat  = args['format']
+time.sleep(30)
 
 
 glueClient  = boto3.client("glue", region_name="us-east-1", endpoint_url="https://glue.us-east-1.amazonaws.com")
@@ -74,8 +75,9 @@ secret_client = boto3.client("secretsmanager", region_name="us-east-1", endpoint
 response = secret_client.get_secret_value(SecretId=args['key_arn'])
 
 print ("secret generated")
+print(response)
 new_test = re.sub("-*(BEGIN|END) RSA PRIVATE KEY-*\r\n","", response["SecretString"]).replace("\n","").replace("\r","")
-
+print(new_test)
 
 SNOWFLAKE_SOURCE_NAME = "net.snowflake.spark.snowflake"
 # Reading from json schema 
@@ -88,8 +90,8 @@ SNOWFLAKE_SOURCE_NAME = "net.snowflake.spark.snowflake"
 # custom_schema =  StructType.fromJson(dict)
 
 # dataPath = fileFormat+'TestData'
-#s3://terraform-20210726142826483100000007/fakedata/Five_Thousand_Rows_Five_Columns/csv/baseline/
-#s3://terraform-20210726142826483100000007/fakedata/Fifty_Thousand_Rows_Five_Columns/json/baseline/
+# s3://terraform-20210726142826483100000007/fakedata/Five_Thousand_Rows_Five_Columns/csv/baseline/
+# s3://terraform-20210726142826483100000007/fakedata/Fifty_Thousand_Rows_Five_Columns/json/baseline/
 test_format = workflowProperties["TestFormat"]
 testDataPath =  workflowProperties["TestOutdir"]+test_format+"/baseline/"
 abbreviated_test_schema = workflowProperties["TestSchema"]
@@ -114,11 +116,11 @@ current_column_number=0
 
 
 Fields=[{'name':'id','type':'long','nullable':False,'metadata':{}}]
-primaryKeys = []
+primaryKeys = ['id']
 
 
 end_index = len(abbreviated_test_schema)-1
-start_index =  0
+start_index = 0
 
 while start_index< end_index:
     current_index = start_index
@@ -136,6 +138,7 @@ while start_index< end_index:
         current_field = {'name':'','type':'','nullable':True,'metadata':{}}
         current_column_number+=1
         current_field['name'] = 'col' + str(current_column_number)
+        
         current_field['type'] = character_mappings[current_character]
         if primary_key_count>0:
             primary_key_count-=1
@@ -155,7 +158,12 @@ struct_type_generated_schema = {
 custom_schema = StructType.fromJson(struct_type_generated_schema)
 print (struct_type_generated_schema)
 print ("src starts")
-srcDataFrame =  spark.read.schema(custom_schema).option("multiline",multiline_mappings[test_format]).option("header","True").load(testDataPath,format = test_format )
+# if test_format == "csv":
+#     srcDataFrame =  spark.read.schema(custom_schema).option("multiline",multiline_mappings[test_format]).option("header","True").load(testDataPath,format = test_format )
+# elif test_format =="json":
+srcDataFrame =  spark.read.option("header",header_mappings[test_format]).load(testDataPath,format = test_format, schema = custom_schema)
+
+
 print (srcDataFrame.show())
 DataSource0 = DynamicFrame.fromDF(srcDataFrame,glueContext,"DataSource0")
 # DataSource0 = glueContext.create_dynamic_frame.from_options(format_options = formatOptions, connection_type = "s3", format = fileFormat, connection_options = {"paths": [testDataPath], "recurse":True}, transformation_ctx = "DataSource0")
