@@ -307,7 +307,7 @@ putProperties = glueClient.put_workflow_run_properties(
 )
 
 job.commit()
-
+# {'type': 'struct', 'fields': [{'name': 'id', 'type': 'long', 'nullable': False, 'metadata': {}}, {'name': 'col1', 'type': 'long', 'nullable': False, 'metadata': {}}, {'name': 'col2', 'type': 'long', 'nullable': True, 'metadata': {}}, {'name': 'col3', 'type': 'string', 'nullable': True, 'metadata': {}}, {'name': 'col4', 'type': 'string', 'nullable': True, 'metadata': {}}]}
 
 
   
