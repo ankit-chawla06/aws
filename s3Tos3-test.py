@@ -41,7 +41,7 @@ print ("src starts")
 #     srcDataFrame =  spark.read.schema(custom_schema).option("multiline",multiline_mappings[test_format]).option("header","True").load(testDataPath,format = test_format )
 # elif test_format =="json":
 srcDataFrame =  spark.read.option("header","True").load(testDataPath,format = test_format, schema = custom_schema)
-
+# srcDataFrame =  spark.read.option("header","True").schema(custom_schema).format(test_format).load(testDataPath)
 print (srcDataFrame.count())
 print (srcDataFrame.show())
 DataSource0 = DynamicFrame.fromDF(srcDataFrame,glueContext,"DataSource0")
@@ -73,3 +73,9 @@ time.sleep(30)
 
 job.commit()
 
+# jr_b6b0c4ea83bcda985c54861e912c408333990645aa671bc399fb1cdaaab3597e
+# id,col1,col2,col3,col4
+# 1,344,11,djsdscfb,abcdefgh
+# 2,176,11,qwertrew,qghjvbsd
+# 3,16672,11112,jhggsbak,lkdbsghj
+# 4,111,156,kjhgfddd,aaaaaaaa
